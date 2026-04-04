@@ -4,7 +4,7 @@ const fs = require('fs');
 const gTTS = require('google-tts-api');
 
 // CONFIG
-const TOKEN = "MTQ5MDA1MTAzMzgxMDg2NjM4Nw.GXZovC.IHa4Dz6V9zx5Meq2D8PnCkq7_InfG_N79uLoRM";
+const TOKEN = "process.env.BOT_TOKEN";
 const GUILD_ID = "1400867238717689897";
 const VOICE_CHANNEL_ID = "1429538224966992013";
 const TEXT_CHANNEL_ID = "1429538224966992013";
