@@ -1,107 +1,137 @@
-const { Client, GatewayIntentBits } = require('discord.js');
-const { joinVoiceChannel, getVoiceConnection, createAudioPlayer, createAudioResource, StreamType, entersState, VoiceConnectionStatus } = require('@discordjs/voice');
-const fs = require('fs');
-const gTTS = require('google-tts-api');
+require('dotenv').config();
 
-// CONFIG
-const TOKEN = "process.env.BOT_TOKEN";
-const GUILD_ID = "1400867238717689897";
-const VOICE_CHANNEL_ID = "1429538224966992013";
-const TEXT_CHANNEL_ID = "1429538224966992013";
-const OWNER_ID = "840259968367591454";
+const { Client, GatewayIntentBits } = require('discord.js');
+const {
+    joinVoiceChannel,
+    createAudioPlayer,
+    createAudioResource,
+    AudioPlayerStatus
+} = require('@discordjs/voice');
+const googleTTS = require('google-tts-api').default;
+const readline = require('readline');
 
 const client = new Client({
-  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates, GatewayIntentBits.GuildMessages]
+    intents: [
+        GatewayIntentBits.Guilds,
+        GatewayIntentBits.GuildVoiceStates
+    ]
 });
-
-let callTimes = {};
-if (fs.existsSync('callTimes.json')) callTimes = JSON.parse(fs.readFileSync('callTimes.json', 'utf-8'));
 
 const player = createAudioPlayer();
+let voiceConnection;
 
-// ------------------ FUNCTIONS ------------------
-async function joinVC() {
-  const guild = await client.guilds.fetch(GUILD_ID);
-  const channel = await guild.channels.fetch(VOICE_CHANNEL_ID);
-  const connection = joinVoiceChannel({
-    channelId: channel.id,
-    guildId: guild.id,
-    adapterCreator: guild.voiceAdapterCreator,
-    selfMute: false,
-    selfDeaf: false
-  });
-  await entersState(connection, VoiceConnectionStatus.Ready, 15000);
-  connection.subscribe(player);
-}
+client.once('clientReady', () => {
+    console.log(`Logged in as ${client.user.tag}`);
 
-function leaveVC() {
-  const connection = getVoiceConnection(GUILD_ID);
-  if(connection) connection.destroy();
-}
+    const rl = readline.createInterface({
+        input: process.stdin,
+        output: process.stdout
+    });
 
-async function say(message) {
-  const channel = await client.channels.fetch(TEXT_CHANNEL_ID);
-  if(channel.isTextBased()) await channel.send(message);
-}
+    rl.on('line', async (line) => {
+        const args = line.split(" ");
+        const command = args.shift().toLowerCase();
 
-async function tts(message) {
-  const connection = getVoiceConnection(GUILD_ID);
-  if(!connection) return console.log("Bot not in VC");
-  const url = gTTS.getAudioUrl(message, { lang: 'en', slow: false, host: 'https://translate.google.com' });
-  const resource = createAudioResource(url, { inputType: StreamType.Arbitrary });
-  player.play(resource);
-}
+        const guild = client.guilds.cache.first();
+        if (!guild) return console.log("No guild found");
 
-async function mention(userId, message) {
-  const channel = await client.channels.fetch(TEXT_CHANNEL_ID);
-  if(channel.isTextBased()) await channel.send(`<@${userId}> ${message}`);
-}
+        try {
+            // =====================
+            // JOIN VOICE
+            // =====================
+            if (command === "join") {
+                const channelId = args[0];
+                if (!channelId) return console.log("Usage: join CHANNEL_ID");
 
-async function addRole(userId, roleId) {
-  if(OWNER_ID !== OWNER_ID) return console.log("Unauthorized");
-  const guild = await client.guilds.fetch(GUILD_ID);
-  const member = await guild.members.fetch(userId);
-  const role = await guild.roles.fetch(roleId);
-  if(member && role) await member.roles.add(role);
-}
+                const channel = guild.channels.cache.get(channelId);
+                if (!channel) return console.log("Channel not found");
 
-async function removeRole(userId, roleId) {
-  if(OWNER_ID !== OWNER_ID) return console.log("Unauthorized");
-  const guild = await client.guilds.fetch(GUILD_ID);
-  const member = await guild.members.fetch(userId);
-  const role = await guild.roles.fetch(roleId);
-  if(member && role) await member.roles.remove(role);
-}
+                voiceConnection = joinVoiceChannel({
+                    channelId: channel.id,
+                    guildId: guild.id,
+                    adapterCreator: guild.voiceAdapterCreator,
+                    selfDeaf: false,
+                    selfMute: false
+                });
 
-async function unban(userId) {
-  if(OWNER_ID !== OWNER_ID) return console.log("Unauthorized");
-  const guild = await client.guilds.fetch(GUILD_ID);
-  const bans = await guild.bans.fetch();
-  if(bans.has(userId)) await guild.members.unban(userId, "Unbanned via UI");
-}
+                voiceConnection.subscribe(player);
 
-// Track call times
-client.on('voiceStateUpdate', (oldState, newState) => {
-  const userId = newState.id;
-  if(!oldState.channelId && newState.channelId) callTimes[userId] = Date.now();
-  if(oldState.channelId && !newState.channelId && callTimes[userId]) {
-    const timeSpentMs = Date.now() - callTimes[userId];
-    console.log(`${oldState.member.user.username} spent ${Math.floor(timeSpentMs/60000)} min(s)`);
-    delete callTimes[userId];
-    fs.writeFileSync('callTimes.json', JSON.stringify(callTimes, null, 2));
-  }
+                console.log("✅ Joined voice channel");
+            }
+
+            // =====================
+            // LEAVE VOICE
+            // =====================
+            else if (command === "leave") {
+                if (!voiceConnection) return console.log("Not in a voice channel!");
+                voiceConnection.destroy();
+                voiceConnection = null;
+                console.log("❌ Left voice channel");
+            }
+
+            // =====================
+            // TTS
+            // =====================
+            else if (command === "tts") {
+                if (!voiceConnection) return console.log("Not in a voice channel!");
+                const text = args.join(" ");
+                if (!text) return console.log("Usage: tts TEXT");
+
+                const url = googleTTS.getAudioUrl(text, {
+                    lang: 'en',
+                    slow: false
+                });
+
+                const resource = createAudioResource(url);
+                player.play(resource);
+                voiceConnection.subscribe(player);
+
+                console.log(`🔊 TTS: ${text}`);
+            }
+
+            // =====================
+            // UNDEAFEN SELF
+            // =====================
+            else if (command === "undeafen") {
+                const me = guild.members.me;
+                await me.voice.setDeaf(false);
+                console.log("🔊 Bot undeafened itself");
+            }
+
+            // =====================
+            // DEAFEN SELF
+            // =====================
+            else if (command === "deafen") {
+                const me = guild.members.me;
+                await me.voice.setDeaf(true);
+                console.log("🔇 Bot deafened itself");
+            }
+
+            // =====================
+            // MUTE SELF
+            // =====================
+            else if (command === "mute") {
+                const me = guild.members.me;
+                await me.voice.setMute(true);
+                console.log("🔇 Bot muted itself");
+            }
+
+            // =====================
+            // UNMUTE SELF
+            // =====================
+            else if (command === "unmute") {
+                const me = guild.members.me;
+                await me.voice.setMute(false);
+                console.log("🎤 Bot unmuted itself");
+            }
+
+            else {
+                console.log("Unknown command");
+            }
+        } catch (err) {
+            console.log("Error executing command:", err);
+        }
+    });
 });
 
-// ------------------ START BOT ------------------
-client.once('ready', async () => {
-  console.log(`Logged in as ${client.user.tag}`);
-  await joinVC();
-});
-
-client.login(TOKEN);
-
-// ------------------ EXPORT FUNCTIONS ------------------
-module.exports = {
-  joinVC, leaveVC, say, tts, mention,
-  addRole, removeRole, unban
-};
+client.login(process.env.BOT_TOKEN);

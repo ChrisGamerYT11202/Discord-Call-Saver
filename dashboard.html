@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Call Saver Dashboard</title>
+</head>
+<body>
+  <h2>Call Saver Dashboard</h2>
+  <input id="command" placeholder="Enter command..." style="width:80%">
+  <button id="send">Send</button>
+
+  <script>
+    const input = document.getElementById('command');
+    const button = document.getElementById('send');
+
+    button.onclick = () => {
+      if (input.value.trim()) {
+        window.api.sendCommand(input.value.trim());
+        input.value = '';
+      }
+    };
+
+    input.addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') button.click();
+    });
+  </script>
+</body>
+</html>

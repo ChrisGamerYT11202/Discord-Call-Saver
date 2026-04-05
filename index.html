@@ -1,43 +1,26 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>Discord Bot Control</title>
+    <title>Discord Call Saver Dashboard</title>
 </head>
 <body>
-  <h1>Discord Bot Dashboard</h1>
+    <h1>Discord Call Saver Dashboard</h1>
+    <h3>Voice Channel Users</h3>
+    <div id="users"></div>
 
-  <button onclick="api.send('join')">Join VC</button>
-  <button onclick="api.send('leave')">Leave VC</button>
-  <br><br>
+    <input type="text" id="ttsInput" placeholder="Say something...">
+    <button id="ttsButton">Play TTS</button>
 
-  <input id="sayInput" placeholder="Message"/>
-  <button onclick="api.send('say ' + document.getElementById('sayInput').value)">Say</button>
-  <button onclick="api.send('tts ' + document.getElementById('sayInput').value)">TTS</button>
-  <br><br>
+    <script>
+        const { ipcRenderer } = require('electron');
 
-  <input id="mentionInput" placeholder="UserID"/>
-  <input id="mentionMsg" placeholder="Message"/>
-  <button onclick="api.send('mention ' + document.getElementById('mentionInput').value + ' ' + document.getElementById('mentionMsg').value)">Mention</button>
-  <br><br>
+        const ttsButton = document.getElementById('ttsButton');
+        const ttsInput = document.getElementById('ttsInput');
 
-  <input id="roleUser" placeholder="UserID"/>
-  <input id="roleId" placeholder="RoleID"/>
-  <button onclick="api.send('addrole ' + document.getElementById('roleUser').value + ' ' + document.getElementById('roleId').value)">Add Role</button>
-  <button onclick="api.send('removerole ' + document.getElementById('roleUser').value + ' ' + document.getElementById('roleId').value)">Remove Role</button>
-  <br><br>
-
-  <input id="unbanUser" placeholder="UserID"/>
-  <button onclick="api.send('unban ' + document.getElementById('unbanUser').value)">Unban</button>
-  <br><br>
-
-  <textarea id="log" rows="15" cols="80" readonly></textarea>
-
-  <script>
-    window.api.onLog(msg => {
-      const logArea = document.getElementById('log');
-      logArea.value += msg + "\n";
-      logArea.scrollTop = logArea.scrollHeight;
-    });
-  </script>
+        ttsButton.onclick = () => {
+            ipcRenderer.send('tts-command', ttsInput.value);
+            ttsInput.value = '';
+        };
+    </script>
 </body>
 </html>
