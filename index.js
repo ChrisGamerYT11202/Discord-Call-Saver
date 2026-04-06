@@ -5,10 +5,13 @@ const {
     joinVoiceChannel,
     createAudioPlayer,
     createAudioResource,
-    AudioPlayerStatus
+    VoiceConnectionStatus,
+    entersState
 } = require('@discordjs/voice');
-const googleTTS = require('google-tts-api').default;
-const readline = require('readline');
+
+const googleTTS = require('google-tts-api');
+
+const CHANNEL_ID = "PUT_VOICE_CHANNEL_ID_HERE";
 
 const client = new Client({
     intents: [
@@ -18,120 +21,75 @@ const client = new Client({
 });
 
 const player = createAudioPlayer();
-let voiceConnection;
+let connection;
 
-client.once('clientReady', () => {
+// =========================
+// JOIN VOICE FOREVER
+// =========================
+async function connectToVoice(guild) {
+    try {
+        console.log("Joining voice...");
+
+        connection = joinVoiceChannel({
+            channelId: CHANNEL_ID,
+            guildId: guild.id,
+            adapterCreator: guild.voiceAdapterCreator,
+            selfDeaf: false
+        });
+
+        connection.subscribe(player);
+
+        connection.on(VoiceConnectionStatus.Disconnected, async () => {
+            console.log("Disconnected... reconnecting");
+
+            try {
+                await Promise.race([
+                    entersState(connection, VoiceConnectionStatus.Signalling, 5000),
+                    entersState(connection, VoiceConnectionStatus.Connecting, 5000),
+                ]);
+            } catch {
+                console.log("Rejoining voice...");
+                connectToVoice(guild);
+            }
+        });
+
+        console.log("✅ Bot is now ALWAYS in voice");
+
+    } catch (err) {
+        console.log("Voice error:", err);
+        setTimeout(() => connectToVoice(guild), 5000);
+    }
+}
+
+// =========================
+// READY EVENT
+// =========================
+client.once('ready', async () => {
     console.log(`Logged in as ${client.user.tag}`);
 
-    const rl = readline.createInterface({
-        input: process.stdin,
-        output: process.stdout
-    });
+    const guild = client.guilds.cache.first();
+    if (!guild) return console.log("No guild found");
 
-    rl.on('line', async (line) => {
-        const args = line.split(" ");
-        const command = args.shift().toLowerCase();
-
-        const guild = client.guilds.cache.first();
-        if (!guild) return console.log("No guild found");
-
-        try {
-            // =====================
-            // JOIN VOICE
-            // =====================
-            if (command === "join") {
-                const channelId = args[0];
-                if (!channelId) return console.log("Usage: join CHANNEL_ID");
-
-                const channel = guild.channels.cache.get(channelId);
-                if (!channel) return console.log("Channel not found");
-
-                voiceConnection = joinVoiceChannel({
-                    channelId: channel.id,
-                    guildId: guild.id,
-                    adapterCreator: guild.voiceAdapterCreator,
-                    selfDeaf: false,
-                    selfMute: false
-                });
-
-                voiceConnection.subscribe(player);
-
-                console.log("✅ Joined voice channel");
-            }
-
-            // =====================
-            // LEAVE VOICE
-            // =====================
-            else if (command === "leave") {
-                if (!voiceConnection) return console.log("Not in a voice channel!");
-                voiceConnection.destroy();
-                voiceConnection = null;
-                console.log("❌ Left voice channel");
-            }
-
-            // =====================
-            // TTS
-            // =====================
-            else if (command === "tts") {
-                if (!voiceConnection) return console.log("Not in a voice channel!");
-                const text = args.join(" ");
-                if (!text) return console.log("Usage: tts TEXT");
-
-                const url = googleTTS.getAudioUrl(text, {
-                    lang: 'en',
-                    slow: false
-                });
-
-                const resource = createAudioResource(url);
-                player.play(resource);
-                voiceConnection.subscribe(player);
-
-                console.log(`🔊 TTS: ${text}`);
-            }
-
-            // =====================
-            // UNDEAFEN SELF
-            // =====================
-            else if (command === "undeafen") {
-                const me = guild.members.me;
-                await me.voice.setDeaf(false);
-                console.log("🔊 Bot undeafened itself");
-            }
-
-            // =====================
-            // DEAFEN SELF
-            // =====================
-            else if (command === "deafen") {
-                const me = guild.members.me;
-                await me.voice.setDeaf(true);
-                console.log("🔇 Bot deafened itself");
-            }
-
-            // =====================
-            // MUTE SELF
-            // =====================
-            else if (command === "mute") {
-                const me = guild.members.me;
-                await me.voice.setMute(true);
-                console.log("🔇 Bot muted itself");
-            }
-
-            // =====================
-            // UNMUTE SELF
-            // =====================
-            else if (command === "unmute") {
-                const me = guild.members.me;
-                await me.voice.setMute(false);
-                console.log("🎤 Bot unmuted itself");
-            }
-
-            else {
-                console.log("Unknown command");
-            }
-        } catch (err) {
-            console.log("Error executing command:", err);
-        }
-    });
+    connectToVoice(guild);
 });
+
+// =========================
+// OPTIONAL TTS COMMAND
+// =========================
+client.on('messageCreate', async message => {
+    if (!message.content.startsWith("!tts")) return;
+
+    const text = message.content.replace("!tts", "").trim();
+
+    const url = googleTTS.getAudioUrl(text, {
+        lang: 'en',
+        slow: false
+    });
+
+    const resource = createAudioResource(url);
+    player.play(resource);
+});
+
+// =========================
 
 client.login(process.env.BOT_TOKEN);
