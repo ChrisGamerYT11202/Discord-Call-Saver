@@ -14,8 +14,6 @@ const {
     AudioPlayerStatus
 } = require('@discordjs/voice');
 
-const play = require('play-dl');
-
 const googleTTS = require('google-tts-api');
 
 const TOKEN = process.env.BOT_TOKEN;
