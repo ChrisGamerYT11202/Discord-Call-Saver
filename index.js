@@ -1,92 +1,125 @@
 require('dotenv').config();
 
-const express = require("express");
-const { Client, GatewayIntentBits } = require('discord.js');
-const { joinVoiceChannel, createAudioPlayer, createAudioResource, VoiceConnectionStatus, entersState } = require('@discordjs/voice');
-const googleTTS = require('google-tts-api').default;
+const {
+    Client,
+    GatewayIntentBits,
+    Partials,
+    ChannelType
+} = require('discord.js');
 
-// =========================
-// KEEP RENDER ALIVE
-// =========================
-const app = express();
-const PORT = process.env.PORT || 3000;
-app.get("/", (req, res) => res.send("Bot is alive"));
-app.listen(PORT, () => console.log(`🌐 Web server running on port ${PORT}`));
+const {
+    joinVoiceChannel,
+    createAudioPlayer,
+    createAudioResource,
+    AudioPlayerStatus
+} = require('@discordjs/voice');
 
-// =========================
-// DISCORD BOT SETUP
-// =========================
-const CHANNEL_ID = "1429538224966992013"; // your voice channel
+const play = require('play-dl');
+
+const googleTTS = require('google-tts-api');
+
+const TOKEN = process.env.BOT_TOKEN;
+const PREFIX = '!';
+
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
-        GatewayIntentBits.GuildVoiceStates,
         GatewayIntentBits.GuildMessages,
-        GatewayIntentBits.MessageContent
-    ]
+        GatewayIntentBits.MessageContent,
+        GatewayIntentBits.GuildVoiceStates
+    ],
+    partials: [Partials.Channel]
 });
 
 const player = createAudioPlayer();
-let connection;
+let connection = null;
 
-// =========================
-// JOIN VOICE FOREVER
-// =========================
-async function connectToVoice(guild) {
-    try {
-        console.log("Joining voice...");
+// ---------- VOICE ----------
+async function joinVoice(channel) {
+    connection = joinVoiceChannel({
+        channelId: channel.id,
+        guildId: channel.guild.id,
+        adapterCreator: channel.guild.voiceAdapterCreator
+    });
 
-        connection = joinVoiceChannel({
-            channelId: CHANNEL_ID,
-            guildId: guild.id,
-            adapterCreator: guild.voiceAdapterCreator,
-            selfDeaf: false
-        });
-
-        connection.subscribe(player);
-
-        connection.on(VoiceConnectionStatus.Disconnected, async () => {
-            console.log("Disconnected... reconnecting");
-            try {
-                await Promise.race([
-                    entersState(connection, VoiceConnectionStatus.Signalling, 5000),
-                    entersState(connection, VoiceConnectionStatus.Connecting, 5000),
-                ]);
-            } catch {
-                console.log("Rejoining voice...");
-                connectToVoice(guild);
-            }
-        });
-
-        console.log("✅ Bot is now ALWAYS in voice");
-    } catch (err) {
-        console.log("Voice error:", err);
-        setTimeout(() => connectToVoice(guild), 5000);
-    }
+    connection.subscribe(player);
+    return `Joined ${channel.name}`;
 }
 
-// =========================
-// READY EVENT
-// =========================
-client.once('ready', async () => {
-    console.log(`Logged in as ${client.user.tag}`);
-    const guild = client.guilds.cache.first();
-    if (!guild) return console.log("No guild found");
-    connectToVoice(guild);
-});
+function leaveVoice() {
+    if (!connection) return 'Not in voice.';
+    connection.destroy();
+    connection = null;
+    return 'Left voice.';
+}
 
-// =========================
-// TTS COMMAND
-// =========================
-client.on('messageCreate', async message => {
-    if (!message.content.startsWith("!tts")) return;
+// ---------- TTS ----------
+async function tts(text) {
+    if (!connection) return 'Not in voice. Use !join first.';
 
-    const text = message.content.replace("!tts", "").trim();
-    if (!text) return;
+    const url = googleTTS.getAudioUrl(text, {
+        lang: 'en',
+        slow: false
+    });
 
-    const url = googleTTS.getAudioUrl(text, { lang: 'en', slow: false });
-    const resource = createAudioResource(url);
+    const stream = await play.stream(url);
+
+    const resource = createAudioResource(stream.stream, {
+        inputType: stream.type
+    });
+
     player.play(resource);
+
+    player.once(AudioPlayerStatus.Idle, () => {
+        // done speaking
+    });
+
+    return `Speaking: ${text}`;
+}
+
+// ---------- MESSAGE HANDLER ----------
+client.on('messageCreate', async (message) => {
+    if (!message.guild || message.author.bot) return;
+    if (!message.content.startsWith(PREFIX)) return;
+
+    const args = message.content.slice(PREFIX.length).trim().split(/\s+/);
+    const cmd = args.shift()?.toLowerCase();
+
+    // JOIN
+    if (cmd === 'join') {
+        const channelId = args[0];
+        if (!channelId) return message.reply('Usage: !join CHANNEL_ID');
+
+        const channel = message.guild.channels.cache.get(channelId);
+
+        if (!channel || channel.type !== ChannelType.GuildVoice) {
+            return message.reply('Invalid voice channel.');
+        }
+
+        const res = await joinVoice(channel);
+        return message.reply(res);
+    }
+
+    // LEAVE
+    if (cmd === 'leave') {
+        return message.reply(leaveVoice());
+    }
+
+    // TTS
+    if (cmd === 'tts') {
+        const text = args.join(' ');
+        if (!text) return message.reply('Usage: !tts text');
+
+        const res = await tts(text);
+        return message.reply(res);
+    }
+
+    return;
 });
 
-client.login(process.env.BOT_TOKEN);
+// ---------- READY ----------
+client.once('ready', () => {
+    console.log(`Logged in as ${client.user.tag}`);
+});
+
+client.login(TOKEN);
