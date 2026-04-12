@@ -54,6 +54,8 @@ function leaveVoice() {
 }
 
 // ---------- MESSAGE HANDLER ----------
+console.log("GOT MESSAGE:", message.content);
+
 client.on('messageCreate', async (message) => {
     if (!message.guild || message.author.bot) return;
     if (!message.content.startsWith(PREFIX)) return;
