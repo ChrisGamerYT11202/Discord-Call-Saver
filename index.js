@@ -1,8 +1,5 @@
 require('dotenv').config();
 
-const express = require('express');
-const app = express();
-
 const PORT = process.env.PORT || 3000;
 
 const {
@@ -126,3 +123,25 @@ client.once('ready', () => {
 });
 
 client.login(TOKEN);
+
+const express = require('express');
+
+const app = express();
+app.use(express.json());
+
+// ✅ HEALTH CHECK (Render uses this sometimes)
+app.get('/', (req, res) => {
+    res.status(200).send('Bot is alive');
+});
+
+app.get('/health', (req, res) => {
+    res.status(200).send('ok');
+});
+
+// ✅ IMPORTANT: Render PORT FIX
+const PORT = process.env.PORT;
+
+// 🚨 MUST bind to 0.0.0.0 or Render won't detect it
+app.listen(PORT, '0.0.0.0', () => {
+    console.log(`🌐 Web server running on port ${PORT}`);
+});
