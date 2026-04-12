@@ -1,10 +1,14 @@
 require('dotenv').config();
 
-const {
-    Client,
-    GatewayIntentBits,
-    Partials,
-    ChannelType
+const client = new Client({
+    intents: [
+        GatewayIntentBits.Guilds,
+        GatewayIntentBits.GuildMessages,
+        GatewayIntentBits.MessageContent,
+        GatewayIntentBits.GuildVoiceStates
+    ]
+});
+
 } = require('discord.js');
 
 const {
@@ -84,19 +88,28 @@ client.on('messageCreate', async (message) => {
     const cmd = args.shift()?.toLowerCase();
 
     // JOIN
-    if (cmd === 'join') {
-        const channelId = args[0];
-        if (!channelId) return message.reply('Usage: !join CHANNEL_ID');
+ if (command === "join") {
+    const id = args[0];
+    if (!id) return "Usage: !join CHANNEL_ID";
 
-        const channel = message.guild.channels.cache.get(channelId);
+    const channel = message.guild.channels.cache.get(id);
 
-        if (!channel || channel.type !== ChannelType.GuildVoice) {
-            return message.reply('Invalid voice channel.');
-        }
+    if (!channel) return "Channel not found";
+    if (channel.type !== 2) return "That is not a voice channel";
 
-        const res = await joinVoice(channel);
-        return message.reply(res);
+    try {
+        voiceConnection = joinVoiceChannel({
+            channelId: channel.id,
+            guildId: message.guild.id,
+            adapterCreator: message.guild.voiceAdapterCreator
+        });
+
+        return "🎧 Joined voice!";
+    } catch (err) {
+        console.log(err);
+        return "Failed to join voice.";
     }
+        }
 
     // LEAVE
     if (cmd === 'leave') {
