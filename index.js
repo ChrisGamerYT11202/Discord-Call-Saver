@@ -79,8 +79,27 @@ client.on('messageCreate', async (message) => {
 });
 
 // ---------- READY ----------
-client.once('ready', () => {
+client.once('clientReady', async () => {
     console.log(`Logged in as ${client.user.tag}`);
+
+    const guild = client.guilds.cache.first();
+    if (!guild) return console.log("No guild found");
+
+    const channel = guild.channels.cache.get("1429538224966992013");
+
+    if (!channel) {
+        console.log("Voice channel not found");
+        return;
+    }
+
+    joinVoiceChannel({
+        channelId: channel.id,
+        guildId: guild.id,
+        adapterCreator: guild.voiceAdapterCreator,
+        selfDeaf: false
+    });
+
+    console.log("🎧 Auto joined voice");
 });
 
 // ---------- LOGIN ----------
