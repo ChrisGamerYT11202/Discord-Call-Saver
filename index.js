@@ -13,11 +13,11 @@ const {
     joinVoiceChannel,
     getVoiceConnection,
     createAudioPlayer,
-    createAudioResource,
-    AudioPlayerStatus
+    createAudioResource
 } = require('@discordjs/voice');
 
 const express = require('express');
+const https = require("https");
 
 const TOKEN = process.env.BOT_TOKEN;
 const CLIENT_ID = process.env.CLIENT_ID;
@@ -42,13 +42,13 @@ let lastGuildId = null;
 let lastChannelId = null;
 
 // =======================
-// VOICE JOIN
+// JOIN VOICE
 // =======================
 async function joinVoice(guild, channelId) {
     const channel = guild.channels.cache.get(channelId);
     if (!channel) return "❌ Channel not found";
 
-    const connection = joinVoiceChannel({
+    joinVoiceChannel({
         channelId: channel.id,
         guildId: guild.id,
         adapterCreator: guild.voiceAdapterCreator,
@@ -64,7 +64,7 @@ async function joinVoice(guild, channelId) {
 }
 
 // =======================
-// LEAVE
+// LEAVE VOICE
 // =======================
 function leaveVoice(guild) {
     const conn = getVoiceConnection(guild.id);
@@ -75,15 +75,11 @@ function leaveVoice(guild) {
 }
 
 // =======================
-// SIMPLE TTS (WORKING)
+// TTS (FIXED & WORKING)
 // =======================
-const https = require("https");
-
 function streamFromUrl(url) {
     return new Promise((resolve, reject) => {
-        https.get(url, (res) => {
-            resolve(res);
-        }).on("error", reject);
+        https.get(url, (res) => resolve(res)).on("error", reject);
     });
 }
 
@@ -106,8 +102,9 @@ async function tts(text) {
 
     return `🔊 Speaking: ${text}`;
 }
+
 // =======================
-// AUTO RECONNECT (INSTANT)
+// AUTO RECONNECT
 // =======================
 client.on('voiceStateUpdate', async (oldState, newState) => {
     if (oldState.id !== client.user.id) return;
@@ -124,7 +121,7 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
 });
 
 // =======================
-// BACKUP CHECK (EVERY 5 MIN)
+// BACKUP CHECK
 // =======================
 setInterval(async () => {
     if (!lastGuildId || !lastChannelId) return;
@@ -211,21 +208,42 @@ async function registerCommands() {
     console.log("⚡ Slash commands registered");
 }
 
+// =======================
+// SLASH HANDLER (FIXED)
+// =======================
 client.on('interactionCreate', async (interaction) => {
     if (!interaction.isChatInputCommand()) return;
 
-    if (interaction.commandName === "join") {
-        const id = interaction.options.getString("channel");
-        return interaction.reply(await joinVoice(interaction.guild, id));
-    }
+    try {
+        if (interaction.commandName === "join") {
+            const id = interaction.options.getString("channel");
 
-    if (interaction.commandName === "leave") {
-        return interaction.reply(leaveVoice(interaction.guild));
-    }
+            await interaction.deferReply();
+            const res = await joinVoice(interaction.guild, id);
+            return interaction.editReply(res);
+        }
 
-    if (interaction.commandName === "tts") {
-        const text = interaction.options.getString("text");
-        return interaction.reply(await tts(text));
+        if (interaction.commandName === "leave") {
+            await interaction.deferReply();
+            const res = leaveVoice(interaction.guild);
+            return interaction.editReply(res);
+        }
+
+        if (interaction.commandName === "tts") {
+            const text = interaction.options.getString("text");
+
+            await interaction.deferReply();
+            const res = await tts(text);
+            return interaction.editReply(res);
+        }
+
+    } catch (err) {
+        console.error(err);
+        if (interaction.deferred || interaction.replied) {
+            interaction.editReply("❌ Error occurred");
+        } else {
+            interaction.reply("❌ Error occurred");
+        }
     }
 });
 
@@ -251,7 +269,7 @@ client.once('clientReady', async () => {
 client.login(TOKEN);
 
 // =======================
-// RENDER SERVER
+// EXPRESS SERVER
 // =======================
 const app = express();
 
