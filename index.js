@@ -13,18 +13,19 @@ const {
     joinVoiceChannel,
     getVoiceConnection,
     createAudioPlayer,
-    createAudioResource
+    createAudioResource,
+    AudioPlayerStatus,
+    StreamType
 } = require('@discordjs/voice');
 
 const express = require('express');
-const https = require("https");
+const gTTS = require('gtts');
+const fs = require('fs');
 
 const TOKEN = process.env.BOT_TOKEN;
 const CLIENT_ID = process.env.CLIENT_ID;
-const PREFIX = "!";
 
-if (!TOKEN) throw new Error("Missing BOT_TOKEN");
-if (!CLIENT_ID) throw new Error("Missing CLIENT_ID");
+const PREFIX = "!";
 
 const client = new Client({
     intents: [
@@ -41,10 +42,15 @@ const player = createAudioPlayer();
 let lastGuildId = null;
 let lastChannelId = null;
 
+// 🔒 THIS PREVENTS AUTO REJOIN AFTER /LEAVE
+let manualLeave = false;
+
 // =======================
-// VOICE JOIN
+// JOIN VOICE
 // =======================
 async function joinVoice(guild, channelId) {
+    if (manualLeave) return "🚪 Bot is in leave mode (use !join or /join to re-enable)";
+
     const channel = guild.channels.cache.get(channelId);
     if (!channel) return "❌ Channel not found";
 
@@ -64,49 +70,73 @@ async function joinVoice(guild, channelId) {
 }
 
 // =======================
-// LEAVE
+// LEAVE (LOCKED)
 // =======================
 function leaveVoice(guild) {
     const conn = getVoiceConnection(guild.id);
     if (!conn) return "❌ Not in voice";
 
+    manualLeave = true; // 🔒 STOP AUTO REJOIN
+
     conn.destroy();
-    return "👋 Left voice";
+
+    console.log("🚪 Left voice (manual lock enabled)");
+
+    return "👋 Left voice (rejoin disabled)";
 }
 
 // =======================
-// TTS (FIXED + SAFE)
+// UNLOCK REJOIN
 // =======================
-function streamFromUrl(url) {
-    return new Promise((resolve, reject) => {
-        https.get(url, (res) => resolve(res)).on("error", reject);
-    });
+function unlockRejoin() {
+    manualLeave = false;
 }
 
+// =======================
+// RELIABLE TTS (MP3 FILE METHOD)
+// =======================
 async function tts(text) {
     const guild = client.guilds.cache.get(lastGuildId);
     if (!guild) return "Not in guild";
 
-    const connection = getVoiceConnection(guild.id);
-    if (!connection) return "Not in voice";
+    const conn = getVoiceConnection(guild.id);
+    if (!conn) return "Not in voice";
 
-    const url =
-        `https://translate.google.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(text)}&tl=en&client=tw-ob`;
+    const filePath = `tts.mp3`;
 
-    const stream = await streamFromUrl(url);
+    return new Promise((resolve, reject) => {
+        const gtts = new gTTS(text, "en");
 
-    const resource = createAudioResource(stream);
+        gtts.save(filePath, async (err) => {
+            if (err) {
+                console.error(err);
+                return resolve("❌ TTS failed");
+            }
 
-    player.play(resource);
-    connection.subscribe(player);
+            const resource = createAudioResource(fs.createReadStream(filePath), {
+                inputType: StreamType.Arbitrary
+            });
 
-    return `🔊 Speaking: ${text}`;
+            player.play(resource);
+            conn.subscribe(player);
+
+            player.once(AudioPlayerStatus.Idle, () => {
+                try {
+                    fs.unlinkSync(filePath);
+                } catch {}
+            });
+
+            resolve(`🔊 Speaking: ${text}`);
+        });
+    });
 }
 
 // =======================
-// AUTO RECONNECT
+// AUTO RECONNECT (DISABLED WHEN LEFT)
 // =======================
 client.on('voiceStateUpdate', async (oldState, newState) => {
+    if (manualLeave) return; // 🚪 STOP EVERYTHING
+
     if (oldState.id !== client.user.id) return;
 
     if (!newState.channelId) {
@@ -117,7 +147,7 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
             if (!guild || !lastChannelId) return;
 
             await joinVoice(guild, lastChannelId);
-        }, 2000);
+        }, 3000);
     }
 });
 
@@ -125,6 +155,8 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
 // BACKUP CHECK
 // =======================
 setInterval(async () => {
+    if (manualLeave) return;
+
     if (!lastGuildId || !lastChannelId) return;
 
     const guild = client.guilds.cache.get(lastGuildId);
@@ -145,12 +177,12 @@ client.on('messageCreate', async (message) => {
     if (!message.guild || message.author.bot) return;
     if (!message.content.startsWith(PREFIX)) return;
 
-    const args = message.content.slice(PREFIX.length).trim().split(/\s+/);
+    const args = message.content.slice(1).trim().split(/\s+/);
     const cmd = args.shift()?.toLowerCase();
 
     if (cmd === "join") {
-        const id = args[0];
-        return message.reply(await joinVoice(message.guild, id));
+        unlockRejoin();
+        return message.reply(await joinVoice(message.guild, args[0]));
     }
 
     if (cmd === "leave") {
@@ -169,7 +201,7 @@ client.on('messageCreate', async (message) => {
 });
 
 // =======================
-// SLASH COMMANDS REGISTER
+// SLASH COMMANDS
 // =======================
 async function registerCommands() {
     const rest = new REST({ version: "10" }).setToken(TOKEN);
@@ -210,13 +242,14 @@ async function registerCommands() {
 }
 
 // =======================
-// SLASH HANDLER (FIXED)
+// INTERACTIONS (FIXED SAFE)
 // =======================
 client.on('interactionCreate', async (interaction) => {
     if (!interaction.isChatInputCommand()) return;
 
     try {
         if (interaction.commandName === "join") {
+            unlockRejoin();
             await interaction.deferReply();
 
             const res = await joinVoice(
@@ -229,9 +262,7 @@ client.on('interactionCreate', async (interaction) => {
 
         if (interaction.commandName === "leave") {
             await interaction.deferReply();
-
             const res = leaveVoice(interaction.guild);
-
             return interaction.editReply(res);
         }
 
@@ -239,7 +270,6 @@ client.on('interactionCreate', async (interaction) => {
             await interaction.deferReply();
 
             const text = interaction.options.getString("text");
-
             const res = await tts(text);
 
             return interaction.editReply(res);
@@ -247,12 +277,9 @@ client.on('interactionCreate', async (interaction) => {
 
     } catch (err) {
         console.error(err);
-
         try {
-            if (interaction.deferred || interaction.replied) {
-                await interaction.editReply("❌ Error occurred");
-            } else {
-                await interaction.reply({ content: "❌ Error occurred", ephemeral: true });
+            if (interaction.deferred) {
+                return interaction.editReply("❌ Error");
             }
         } catch {}
     }
@@ -269,9 +296,7 @@ client.once('clientReady', async () => {
     const guild = client.guilds.cache.first();
     if (!guild) return;
 
-    const defaultChannel = "1429538224966992013";
-
-    await joinVoice(guild, defaultChannel);
+    await joinVoice(guild, "1429538224966992013");
 });
 
 // =======================
@@ -280,7 +305,7 @@ client.once('clientReady', async () => {
 client.login(TOKEN);
 
 // =======================
-// EXPRESS SERVER (RENDER FIX)
+// RENDER SERVER
 // =======================
 const app = express();
 
