@@ -4,7 +4,6 @@ const {
     Client,
     GatewayIntentBits,
     Partials,
-    ChannelType,
     REST,
     Routes,
     SlashCommandBuilder
@@ -18,14 +17,14 @@ const {
     AudioPlayerStatus
 } = require('@discordjs/voice');
 
-const googleTTS = require('google-tts-api');
-const play = require('play-dl');
 const express = require('express');
 
 const TOKEN = process.env.BOT_TOKEN;
-const CLIENT_ID = process.env.CLIENT_ID; // IMPORTANT for slash commands
+const CLIENT_ID = process.env.CLIENT_ID;
+const PREFIX = "!";
 
-const PREFIXES = ['!', '?', '/'];
+if (!TOKEN) throw new Error("Missing BOT_TOKEN");
+if (!CLIENT_ID) throw new Error("Missing CLIENT_ID");
 
 const client = new Client({
     intents: [
@@ -42,74 +41,67 @@ const player = createAudioPlayer();
 let lastGuildId = null;
 let lastChannelId = null;
 
-// =========================
+// =======================
 // VOICE JOIN
-// =========================
+// =======================
 async function joinVoice(guild, channelId) {
     const channel = guild.channels.cache.get(channelId);
-    if (!channel) return "Channel not found";
+    if (!channel) return "❌ Channel not found";
 
     const connection = joinVoiceChannel({
-        channelId,
+        channelId: channel.id,
         guildId: guild.id,
         adapterCreator: guild.voiceAdapterCreator,
         selfDeaf: false
     });
 
-    connection.subscribe(player);
-
     lastGuildId = guild.id;
-    lastChannelId = channelId;
+    lastChannelId = channel.id;
 
-    console.log("🎧 Joined:", channel.name);
-    return "🎧 Joined voice";
+    console.log(`🎧 Joined ${channel.name}`);
+
+    return `🎧 Joined ${channel.name}`;
 }
 
-// =========================
+// =======================
 // LEAVE
-// =========================
+// =======================
 function leaveVoice(guild) {
     const conn = getVoiceConnection(guild.id);
-    if (!conn) return "Not in voice";
+    if (!conn) return "❌ Not in voice";
 
     conn.destroy();
     return "👋 Left voice";
 }
 
-// =========================
-// TTS
-// =========================
-async function speak(text, guild) {
+// =======================
+// SIMPLE TTS (NO DEPENDENCIES)
+// =======================
+async function tts(text) {
+    const guild = client.guilds.cache.get(lastGuildId);
+    if (!guild) return "Not in guild";
+
     const conn = getVoiceConnection(guild.id);
     if (!conn) return "Not in voice";
 
-    const url = googleTTS.getAudioUrl(text, {
-        lang: 'en',
-        slow: false
-    });
+    const url = `https://translate.google.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(text)}&tl=en&client=tw-ob`;
 
-    const stream = await play.stream(url);
-    const resource = createAudioResource(stream.stream, {
-        inputType: stream.type
-    });
+    const resource = createAudioResource(url);
 
     player.play(resource);
+    conn.subscribe(player);
 
     return `🔊 Speaking: ${text}`;
 }
 
-// =========================
-// AUTO RECONNECT (EVENT)
-// =========================
+// =======================
+// AUTO RECONNECT (INSTANT)
+// =======================
 client.on('voiceStateUpdate', async (oldState, newState) => {
-    if (!client.user) return;
+    if (oldState.id !== client.user.id) return;
 
-    if (
-        oldState.id === client.user.id &&
-        !newState.channelId
-    ) {
-        console.log("⚠️ Disconnected → retrying...");
-
+    if (!newState.channelId) {
+        console.log("⚠️ Disconnected → rejoining...");
         setTimeout(async () => {
             const guild = client.guilds.cache.get(lastGuildId);
             if (!guild || !lastChannelId) return;
@@ -119,150 +111,142 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
     }
 });
 
-// =========================
+// =======================
 // BACKUP CHECK (EVERY 5 MIN)
-// =========================
+// =======================
 setInterval(async () => {
+    if (!lastGuildId || !lastChannelId) return;
+
     const guild = client.guilds.cache.get(lastGuildId);
-    if (!guild || !lastChannelId) return;
+    if (!guild) return;
 
     const conn = getVoiceConnection(guild.id);
 
     if (!conn) {
-        console.log("♻️ 5-min reconnect triggered");
+        console.log("♻️ Backup reconnect triggered");
         await joinVoice(guild, lastChannelId);
     }
 }, 5 * 60 * 1000);
 
-// =========================
-// PREFIX HANDLER (! / ?)
-// =========================
-client.on('messageCreate', async message => {
+// =======================
+// PREFIX COMMANDS
+// =======================
+client.on('messageCreate', async (message) => {
     if (!message.guild || message.author.bot) return;
+    if (!message.content.startsWith(PREFIX)) return;
 
-    const prefixUsed = PREFIXES.find(p => message.content.startsWith(p));
-    if (!prefixUsed) return;
-
-    const args = message.content.slice(prefixUsed.length).trim().split(/\s+/);
+    const args = message.content.slice(PREFIX.length).trim().split(/\s+/);
     const cmd = args.shift()?.toLowerCase();
 
-    // JOIN
-    if (cmd === 'join') {
+    if (cmd === "join") {
         const id = args[0];
-        if (!id) return message.reply('Usage: !join CHANNEL_ID');
         return message.reply(await joinVoice(message.guild, id));
     }
 
-    // LEAVE
-    if (cmd === 'leave') {
+    if (cmd === "leave") {
         return message.reply(leaveVoice(message.guild));
     }
 
-    // TTS
-    if (cmd === 'tts') {
-        const text = args.join(' ');
-        if (!text) return message.reply('Usage: !tts hello');
-        return message.reply(await speak(text, message.guild));
+    if (cmd === "tts") {
+        const text = args.join(" ");
+        if (!text) return message.reply("Usage: !tts text");
+        return message.reply(await tts(text));
     }
 
-    if (cmd === 'help') {
-        return message.reply(
-            `Commands:
-!join <id>
-!leave
-!tts <text>`
-        );
+    if (cmd === "help") {
+        return message.reply("Commands: !join !leave !tts | /join /leave /tts");
     }
 });
 
-// =========================
+// =======================
 // SLASH COMMANDS
-// =========================
-client.on('interactionCreate', async interaction => {
-    if (!interaction.isChatInputCommand()) return;
-
-    if (interaction.commandName === 'join') {
-        const id = interaction.options.getString('channel');
-        return interaction.reply(await joinVoice(interaction.guild, id));
-    }
-
-    if (interaction.commandName === 'leave') {
-        return interaction.reply(leaveVoice(interaction.guild));
-    }
-
-    if (interaction.commandName === 'tts') {
-        const text = interaction.options.getString('text');
-        return interaction.reply(await speak(text, interaction.guild));
-    }
-});
-
-// =========================
-// READY
-// =========================
-client.once('clientReady', async () => {
-    console.log("✅ Logged in:", client.user.tag);
-
-    const guild = client.guilds.cache.first();
-    if (!guild) return;
-
-    const defaultChannel = "1429538224966992013";
-    await joinVoice(guild, defaultChannel);
-});
-
-// =========================
-// SLASH REGISTER (AUTO)
-// =========================
+// =======================
 async function registerCommands() {
-    if (!CLIENT_ID) return;
+    const rest = new REST({ version: "10" }).setToken(TOKEN);
 
     const commands = [
         new SlashCommandBuilder()
-            .setName('join')
-            .setDescription('Join a voice channel')
+            .setName("join")
+            .setDescription("Join a voice channel")
             .addStringOption(opt =>
-                opt.setName('channel')
-                    .setDescription('Channel ID')
+                opt.setName("channel")
+                    .setDescription("Channel ID")
                     .setRequired(true)
             ),
 
         new SlashCommandBuilder()
-            .setName('leave')
-            .setDescription('Leave voice'),
+            .setName("leave")
+            .setDescription("Leave voice"),
 
         new SlashCommandBuilder()
-            .setName('tts')
-            .setDescription('Speak text')
+            .setName("tts")
+            .setDescription("Speak text")
             .addStringOption(opt =>
-                opt.setName('text')
-                    .setDescription('Text to speak')
+                opt.setName("text")
+                    .setDescription("Text to speak")
                     .setRequired(true)
             )
     ].map(c => c.toJSON());
 
-    const rest = new REST({ version: '10' }).setToken(TOKEN);
+    const guild = client.guilds.cache.first();
+    if (!guild) return;
 
     await rest.put(
-        Routes.applicationCommands(CLIENT_ID),
+        Routes.applicationGuildCommands(CLIENT_ID, guild.id),
         { body: commands }
     );
 
     console.log("⚡ Slash commands registered");
 }
 
-// =========================
-// EXPRESS (Render keep alive)
-// =========================
+client.on('interactionCreate', async (interaction) => {
+    if (!interaction.isChatInputCommand()) return;
+
+    if (interaction.commandName === "join") {
+        const id = interaction.options.getString("channel");
+        return interaction.reply(await joinVoice(interaction.guild, id));
+    }
+
+    if (interaction.commandName === "leave") {
+        return interaction.reply(leaveVoice(interaction.guild));
+    }
+
+    if (interaction.commandName === "tts") {
+        const text = interaction.options.getString("text");
+        return interaction.reply(await tts(text));
+    }
+});
+
+// =======================
+// READY
+// =======================
+client.once('clientReady', async () => {
+    console.log(`✅ Logged in as ${client.user.tag}`);
+
+    await registerCommands();
+
+    const guild = client.guilds.cache.first();
+    if (!guild) return;
+
+    const defaultChannel = "1429538224966992013";
+
+    await joinVoice(guild, defaultChannel);
+});
+
+// =======================
+// LOGIN
+// =======================
+client.login(TOKEN);
+
+// =======================
+// RENDER SERVER
+// =======================
 const app = express();
 
-app.get('/', (_, res) => res.send("Bot alive"));
+app.get("/", (_, res) => res.send("Bot alive"));
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, '0.0.0.0', () =>
-    console.log("🌐 Web server on", PORT)
-);
 
-// =========================
-// START
-// =========================
-client.login(TOKEN);
-registerCommands();
+app.listen(PORT, '0.0.0.0', () => {
+    console.log("🌐 Web server running on port", PORT);
+});
