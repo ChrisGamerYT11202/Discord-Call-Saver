@@ -10,7 +10,8 @@
     "discord.js": "^14.26.2",
     "dotenv": "^16.6.1",
     "express": "^4.18.2",
-    "google-tts-api": "^0.0.6"
+    "google-tts-api": "^0.0.6",
+    "play-dl": "^1.9.7"
   },
   "keywords": [],
   "author": "",
