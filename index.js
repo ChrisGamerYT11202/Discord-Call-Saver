@@ -42,7 +42,7 @@ let lastGuildId = null;
 let lastChannelId = null;
 
 // =======================
-// JOIN VOICE
+// VOICE JOIN
 // =======================
 async function joinVoice(guild, channelId) {
     const channel = guild.channels.cache.get(channelId);
@@ -64,7 +64,7 @@ async function joinVoice(guild, channelId) {
 }
 
 // =======================
-// LEAVE VOICE
+// LEAVE
 // =======================
 function leaveVoice(guild) {
     const conn = getVoiceConnection(guild.id);
@@ -75,7 +75,7 @@ function leaveVoice(guild) {
 }
 
 // =======================
-// TTS (FIXED & WORKING)
+// TTS (FIXED + SAFE)
 // =======================
 function streamFromUrl(url) {
     return new Promise((resolve, reject) => {
@@ -111,6 +111,7 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
 
     if (!newState.channelId) {
         console.log("⚠️ Disconnected → rejoining...");
+
         setTimeout(async () => {
             const guild = client.guilds.cache.get(lastGuildId);
             if (!guild || !lastChannelId) return;
@@ -168,7 +169,7 @@ client.on('messageCreate', async (message) => {
 });
 
 // =======================
-// SLASH COMMANDS
+// SLASH COMMANDS REGISTER
 // =======================
 async function registerCommands() {
     const rest = new REST({ version: "10" }).setToken(TOKEN);
@@ -176,7 +177,7 @@ async function registerCommands() {
     const commands = [
         new SlashCommandBuilder()
             .setName("join")
-            .setDescription("Join a voice channel")
+            .setDescription("Join voice")
             .addStringOption(opt =>
                 opt.setName("channel")
                     .setDescription("Channel ID")
@@ -192,7 +193,7 @@ async function registerCommands() {
             .setDescription("Speak text")
             .addStringOption(opt =>
                 opt.setName("text")
-                    .setDescription("Text to speak")
+                    .setDescription("Text")
                     .setRequired(true)
             )
     ].map(c => c.toJSON());
@@ -216,34 +217,44 @@ client.on('interactionCreate', async (interaction) => {
 
     try {
         if (interaction.commandName === "join") {
-            const id = interaction.options.getString("channel");
-
             await interaction.deferReply();
-            const res = await joinVoice(interaction.guild, id);
+
+            const res = await joinVoice(
+                interaction.guild,
+                interaction.options.getString("channel")
+            );
+
             return interaction.editReply(res);
         }
 
         if (interaction.commandName === "leave") {
             await interaction.deferReply();
+
             const res = leaveVoice(interaction.guild);
+
             return interaction.editReply(res);
         }
 
         if (interaction.commandName === "tts") {
+            await interaction.deferReply();
+
             const text = interaction.options.getString("text");
 
-            await interaction.deferReply();
             const res = await tts(text);
+
             return interaction.editReply(res);
         }
 
     } catch (err) {
         console.error(err);
-        if (interaction.deferred || interaction.replied) {
-            interaction.editReply("❌ Error occurred");
-        } else {
-            interaction.reply("❌ Error occurred");
-        }
+
+        try {
+            if (interaction.deferred || interaction.replied) {
+                await interaction.editReply("❌ Error occurred");
+            } else {
+                await interaction.reply({ content: "❌ Error occurred", ephemeral: true });
+            }
+        } catch {}
     }
 });
 
@@ -269,7 +280,7 @@ client.once('clientReady', async () => {
 client.login(TOKEN);
 
 // =======================
-// EXPRESS SERVER
+// EXPRESS SERVER (RENDER FIX)
 // =======================
 const app = express();
 
