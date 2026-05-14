@@ -75,25 +75,37 @@ function leaveVoice(guild) {
 }
 
 // =======================
-// SIMPLE TTS (NO DEPENDENCIES)
+// SIMPLE TTS (WORKING)
 // =======================
+const https = require("https");
+
+function streamFromUrl(url) {
+    return new Promise((resolve, reject) => {
+        https.get(url, (res) => {
+            resolve(res);
+        }).on("error", reject);
+    });
+}
+
 async function tts(text) {
     const guild = client.guilds.cache.get(lastGuildId);
     if (!guild) return "Not in guild";
 
-    const conn = getVoiceConnection(guild.id);
-    if (!conn) return "Not in voice";
+    const connection = getVoiceConnection(guild.id);
+    if (!connection) return "Not in voice";
 
-    const url = `https://translate.google.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(text)}&tl=en&client=tw-ob`;
+    const url =
+        `https://translate.google.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(text)}&tl=en&client=tw-ob`;
 
-    const resource = createAudioResource(url);
+    const stream = await streamFromUrl(url);
+
+    const resource = createAudioResource(stream);
 
     player.play(resource);
-    conn.subscribe(player);
+    connection.subscribe(player);
 
     return `🔊 Speaking: ${text}`;
 }
-
 // =======================
 // AUTO RECONNECT (INSTANT)
 // =======================
