@@ -8,15 +8,11 @@ const {
 } = require('discord.js');
 
 const {
-    joinVoiceChannel
+    joinVoiceChannel,
+    getVoiceConnection
 } = require('@discordjs/voice');
 
 const express = require('express');
-const app = express();
-app.use(express.json());
-
-const TOKEN = process.env.BOT_TOKEN;
-const PREFIX = '!';
 
 const client = new Client({
     intents: [
@@ -28,201 +24,177 @@ const client = new Client({
     partials: [Partials.Channel]
 });
 
-// ============================
-// VOICE STATE MEMORY
-// ============================
+const PREFIX = "!";
+const TOKEN = process.env.BOT_TOKEN;
 
-let connection = null;
 let lastVoiceChannelId = null;
 let lastGuildId = null;
 
-// ============================
-// JOIN VOICE
-// ============================
+// =======================
+// JOIN FUNCTION
+// =======================
 
-async function joinVoice(messageOrGuild, channelId) {
-
-    const guild =
-        messageOrGuild.guild ??
-        messageOrGuild;
+async function joinVoice(guild, channelId) {
 
     const channel = guild.channels.cache.get(channelId);
+    if (!channel) return "Channel not found";
 
-    if (!channel)
-        return "❌ Channel not found";
-
-    if (channel.type !== ChannelType.GuildVoice)
-        return "❌ Not a voice channel";
-
-    connection = joinVoiceChannel({
-        channelId: channel.id,
+    const connection = joinVoiceChannel({
+        channelId,
         guildId: guild.id,
         adapterCreator: guild.voiceAdapterCreator,
         selfDeaf: false
     });
 
-    // remember channel
-    lastVoiceChannelId = channel.id;
+    lastVoiceChannelId = channelId;
     lastGuildId = guild.id;
 
-    console.log(`🎧 Joined ${channel.name}`);
+    console.log("🎧 Joined VC:", channel.name);
 
-    return `🎧 Joined ${channel.name}`;
+    return "🎧 Joined voice";
 }
 
-// ============================
-// LEAVE VOICE
-// ============================
+// =======================
+// LEAVE
+// =======================
 
-function leaveVoice() {
-    if (!connection) return "❌ Not in voice";
+function leaveVoice(guild) {
 
-    connection.destroy();
-    connection = null;
+    const conn = getVoiceConnection(guild.id);
+    if (!conn) return "Not in voice";
 
-    console.log("👋 Left voice");
-
+    conn.destroy();
     return "👋 Left voice";
 }
 
-// ============================
-// COMMAND HANDLER
-// ============================
+// =======================
+// AUTO REJOIN (INSTANT)
+// =======================
 
-client.on('messageCreate', async (message) => {
+client.on('voiceStateUpdate', async (oldState, newState) => {
+
+    if (!client.user) return;
+
+    if (
+        oldState.member?.id === client.user.id &&
+        !newState.channelId
+    ) {
+        console.log("⚠️ Disconnected — rejoining instantly");
+
+        setTimeout(async () => {
+            try {
+                const guild = client.guilds.cache.get(lastGuildId);
+                if (guild && lastVoiceChannelId)
+                    await joinVoice(guild, lastVoiceChannelId);
+            } catch {}
+        }, 2000);
+    }
+});
+
+// =======================
+// BACKUP 5 MIN CHECK
+// =======================
+
+setInterval(async () => {
+
+    const guild = client.guilds.cache.get(lastGuildId);
+    if (!guild || !lastVoiceChannelId) return;
+
+    const conn = getVoiceConnection(guild.id);
+
+    if (!conn) {
+        console.log("♻️ Backup rejoin triggered");
+        await joinVoice(guild, lastVoiceChannelId);
+    }
+
+}, 5 * 60 * 1000);
+
+// =======================
+// PREFIX COMMANDS
+// =======================
+
+client.on('messageCreate', async message => {
 
     if (!message.guild || message.author.bot) return;
     if (!message.content.startsWith(PREFIX)) return;
 
-    console.log("📩 Command received:", message.content);
+    const args = message.content.slice(1).split(/\s+/);
+    const cmd = args.shift().toLowerCase();
 
-    const args = message.content
-        .slice(PREFIX.length)
-        .trim()
-        .split(/\s+/);
-
-    const cmd = args.shift()?.toLowerCase();
-
-    // JOIN
     if (cmd === "join") {
         const id = args[0];
-        if (!id)
-            return message.reply("Usage: !join CHANNEL_ID");
-
-        const result = await joinVoice(message, id);
-        return message.reply(result);
+        return message.reply(await joinVoice(message.guild, id));
     }
 
-    // LEAVE
     if (cmd === "leave") {
-        return message.reply(leaveVoice());
+        return message.reply(leaveVoice(message.guild));
     }
 
-    // HELP
     if (cmd === "help") {
-        return message.reply(
-            "Commands:\n" +
-            "`!join CHANNEL_ID` - join VC\n" +
-            "`!leave` - leave VC"
+        return message.reply("Commands: !join !leave OR /join /leave");
+    }
+});
+
+// =======================
+// SLASH COMMANDS
+// =======================
+
+client.on('interactionCreate', async interaction => {
+
+    if (!interaction.isChatInputCommand()) return;
+
+    if (interaction.commandName === "join") {
+        const id = interaction.options.getString("channel");
+        await interaction.reply(
+            await joinVoice(interaction.guild, id)
+        );
+    }
+
+    if (interaction.commandName === "leave") {
+        await interaction.reply(
+            leaveVoice(interaction.guild)
+        );
+    }
+
+    if (interaction.commandName === "help") {
+        await interaction.reply(
+            "Commands: !join /join !leave /leave"
         );
     }
 });
 
-// ============================
-// AUTO JOIN ON STARTUP
-// ============================
+// =======================
+// READY AUTO JOIN
+// =======================
 
 client.once('clientReady', async () => {
 
-    console.log(`Logged in as ${client.user.tag}`);
+    console.log("✅ Logged in as", client.user.tag);
 
     const guild = client.guilds.cache.first();
     if (!guild) return;
 
     const channelId = "1429538224966992013";
 
-    const channel = guild.channels.cache.get(channelId);
-    if (!channel) {
-        console.log("Voice channel not found");
-        return;
-    }
-
     await joinVoice(guild, channelId);
-
-    console.log("🎧 Auto joined voice");
 });
 
-// ============================
-// DETECT DISCONNECT
-// ============================
-
-client.on('voiceStateUpdate', (oldState, newState) => {
-
-    if (!client.user) return;
-
-    // bot got disconnected
-    if (
-        oldState.member?.id === client.user.id &&
-        !newState.channelId
-    ) {
-        console.log("⚠️ Bot disconnected from voice");
-        connection = null;
-    }
-});
-
-// ============================
-// AUTO REJOIN LOOP
-// ============================
-
-setInterval(async () => {
-
-    try {
-
-        if (!lastVoiceChannelId || !lastGuildId)
-            return;
-
-        if (connection &&
-            connection.state.status !== "destroyed")
-            return;
-
-        console.log("🔎 Checking voice connection...");
-
-        const guild =
-            client.guilds.cache.get(lastGuildId);
-
-        if (!guild) return;
-
-        const channel =
-            guild.channels.cache.get(lastVoiceChannelId);
-
-        if (!channel) return;
-
-        console.log("♻️ Rejoining voice channel...");
-
-        await joinVoice(guild, lastVoiceChannelId);
-
-    } catch (err) {
-        console.log("Auto-rejoin error:", err);
-    }
-
-}, 5 * 60 * 1000); // every 5 minutes
-
-// ============================
+// =======================
 // LOGIN
-// ============================
+// =======================
 
 client.login(TOKEN);
 
-// ============================
-// RENDER PORT FIX
-// ============================
+// =======================
+// RENDER KEEP ALIVE
+// =======================
+
+const app = express();
+
+app.get('/', (_, res) => res.send("Bot alive"));
 
 const PORT = process.env.PORT || 3000;
 
-app.get('/', (req, res) => {
-    res.send('Bot is alive');
-});
-
-app.listen(PORT, '0.0.0.0', () => {
-    console.log(`🌐 Web server running on port ${PORT}`);
-});
+app.listen(PORT, '0.0.0.0', () =>
+    console.log("🌐 Web server running on port", PORT)
+);
