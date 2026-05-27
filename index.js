@@ -459,6 +459,9 @@ client.on('interactionCreate', async (interaction) => {
 
     try {
         const guild = interaction.guild;
+        if (!guild) {
+            return safeReplyInteraction(interaction, '❌ This command only works in a server');
+        }
         const state = getGuildState(guild.id);
 
         if (interaction.commandName === 'join') {
@@ -564,7 +567,7 @@ client.once('clientReady', async () => {
 
     // optional: dump state for every guild the bot is in, but do not force join
     for (const [guildId, guild] of client.guilds.cache) {
-        getGuildData(guildId);
+        getGuildState(guildId);
         logGuild(guildId, `state ready for guild ${guild.name}`);
     }
 });
